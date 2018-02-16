@@ -287,7 +287,7 @@ proc ::refresh { } {
 
 proc mapper { d _map { lvls {} } } {
     upvar $_map map
-    dict for {k v} $d {
+    foreach {k v} $d {
         if { [llength $v] > 1 } {
             mapper $v map [concat $lvls $k]
         } else {
