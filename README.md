@@ -181,8 +181,8 @@ withstandard is able to use any syntax that is allowed by the internal Tcl
 
 ## Implementation Details
 
-[withstander] is implemented using [Tcl] and makes heavily use of the
-[Docker](https://github.com/efrecon/docker-client) API implementation.
+[withstander] is implemented using [Tcl] and makes heavily use of the Docker API
+[implementation](https://github.com/efrecon/docker-client).
 
 If you wanted to run withstander standalone, e.g. not as a container, you will
 have to arrange for a copy of the `docker` sub-folder of the client API
