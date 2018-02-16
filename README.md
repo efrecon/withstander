@@ -3,8 +3,9 @@
 [withstander] is a docker container for improved stability. It can be used to
 restrain containers from running amok and using too many resources. This is to
 be used on top of Docker builtin capabilities for e.g. constraining [resources]
-for particular containers, and builds upon the idea that a container that is
-using too many resources is probably not healthy and should be taken acted upon.
+for particular containers.  Withstander builds upon the idea that a container
+that is using too many (network, CPU, memory, etc.) resources for too long is
+probably not healthy and should be acted upon.
 
   [withstander]: https://hub.docker.com/r/efrecon/withstander/
   [resources]: https://docs.docker.com/config/containers/resource_constraints/
