@@ -1,22 +1,24 @@
 # Withstander
 
-Withstander is a docker container for improved stability to keep containers from
-running amok and using too many resources. This is to be used on-top of Docker
-builtin capabilities for e.g. constraining [resources] for particular
-containers, and builds upon the idea that a container that is using too many
-resources is probably not healthy and should be taken acted upon.
+[withstander] is a docker container for improved stability and restraining
+containers from running amok and using too many resources. This is to be used on
+top of Docker builtin capabilities for e.g. constraining [resources] for
+particular containers, and builds upon the idea that a container that is using
+too many resources is probably not healthy and should be taken acted upon.
 
+  [withstander]: https://hub.docker.com/r/efrecon/withstander/
   [resources]: https://docs.docker.com/config/containers/resource_constraints/
 
 ## Example
 
-Provided you have docker setup and running on your machine, running the
+Provided you have docker set up and running on your machine, running the
 following command would arrange to restart any container that have used more
 than 96% of the CPU resources for the past 10 seconds.  Note that this binds the
 local Docker socket into the container so that it can communicate with the
-Docker daemon using its [API].
+Docker daemon using its [stats] [API].
 
-  [API]: https://docs.docker.com/engine/api/v1.30/#operation/ContainerStats
+  [stats]: https://docs.docker.com/engine/api/v1.30/#operation/ContainerStats
+  [API]: https://docs.docker.com/engine/api
 
 ````Shell
 docker run -it --rm \
@@ -79,3 +81,116 @@ daemon [API], and generate a number of higher-level statistics similar to the
 ones offered by the `docker stats` command.  Withstander is then able to take
 actions when one or several of these metrics have matched a criteria for a given
 time period.
+
+## Options
+
+Withstander takes a number of options and arugments on the command-line.  There
+are few options, these are led by a single-dash for quicker typing while keeping
+expressiveness.
+
+### `-docker`
+
+This should point at the URI where to reach the Docker daemon [API].  It
+defaults to `unix:///var/run/docker.sock` in order to reach the local Docker
+daemon on the standard UNIX socket.  To access a remote Docker daemon, use a URL
+such as `tcp://localhost:2375`, for dangerous unencrypted access, or
+`https://localhost:2376` for TLS encrypted access.  In the latter case, you can
+combine this with the options `-cert` and `-key` to pinpoint your remote client.
+
+### `-cert` and `-key`
+
+Path location to the certificate, respectively key to use for TLS encrypted
+communication with the daemon.
+
+### `-rules`
+
+This should be a 5-ary list of space separated arguments expressing rules to
+control the behaviour of withstander.  Rules are groups of 5 with the following
+meaning, in order:
+
+1. Glob-style pattern matching the name (or identifier) of container(s).
+2. Integer number of seconds for expression matching to trigger the command.
+3. Expression to match against the statistics all along this period (this is
+   explained further below).
+4. Docker sub-command to exectute. At present, this is what is supported by the
+   internal low-level [Tcl](https://github.com/efrecon/docker-client)
+   implementation of the Docker [API].
+5. Arguments to the command. These are **not** the arguments from the `docker`
+   command, but rather [API] URL parameters.
+
+### `-refresh`
+
+Number of seconds (defaults to 5) to check for new containers or discover
+containers that have stopped running.  Specifying a negative value will turn off
+continuous discovery, in which case withstander will only perform a single
+container snapshot at start-up.
+
+### `-period`
+
+Frequency (expressed in decimal seconds) at which to check for the set of rules
+controlling the behaviour of withstander. Note that this does **not** change the
+pace of the statistics collection, as this is driven by the Docker Daemon
+intead.  The default is to check every second, which is inline with the pace of
+the daemon itself. There might be a "dead" second after container discovery
+where all (CPU) statistics cannot be collected.
+
+### `-h`
+
+Print down help and exit.  This is also the default behaviour when an
+unrecognised option is specified.
+
+### `-verbose`
+
+Change the verbosity level, available levels are `CRITICAL`, `ERROR`, `WARN`,
+`NOTICE`, `INFO`, `DEBUG` and the default is `INFO`.  Logging occurs by default
+on `stderr` so that it can be captured by the daemon and further process using
+host-wide mechanisms.
+
+## Collected Statistics and Expressions
+
+### Statistics
+
+Withstander collects the JSON [stats] that are provided by the running Docker
+Daemon.  It is able to use these statistics directly in its mathematical
+expression, joining together the JSON hierarchy using dots (`.`), so
+`system_cpu_usage` which is placed under `cpu_stats` is represented by
+`cpu_stats.system_cpu_usage` in expressions.
+
+Using these statistics, withstander compute higher-level statistics that can be
+also be used in expressions.  These statistics are inline with the statistics
+provided by the `docker stats` command, and are, at present:
+
+* `cpuPercent` total instantaneous CPU usage (for all CPUs alloted to the
+  container).
+* `mem` total number of memory used (in bytes), this is an alias for
+  `memory_stats.usage`.
+* `memLimit`, memory limit in number of bytes, this is an alias for
+  `memory_stats.limit`.
+* `memPercent` the percentage of memory used by the process right now.
+* `rx` and `tx` the number of bytes received and sent on all interfaces alloted
+  to the container.
+
+### Expressions
+
+Given the statistics described above and how they are represented above,
+withstandard is able to use any syntax that is allowed by the internal Tcl
+[expr] syntax.
+
+  [expr]: https://www.tcl.tk/man/tcl/TclCmd/expr.htm
+
+## Implementation Details
+
+[withstander] is implemented using [Tcl] and makes heavily use of the
+[Docker](https://github.com/efrecon/docker-client) API implementation.
+
+If you wanted to run withstander standalone, e.g. not as a container, you will
+have to arrange for a copy of the `docker` sub-folder of the client API
+implementation to be present under the main directory of your copy of this
+repository. You will also have an installation of `socat` or `nc` if you want to
+communicate with the local Docker daemon with the UNIX socket, as Tcl has no
+support for UNIX sockets by default. TLS encrypted access to (remote) daemone
+requires the [TclTLS] package, but this package is usually part of most
+distributions.
+
+  [Tcl]: https://www.tcl.tk/
+  [TclTLS]: https://core.tcl.tk/tcltls/wiki/Documentation
