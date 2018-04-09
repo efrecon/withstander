@@ -1,18 +1,14 @@
-FROM efrecon/mini-tcl
+FROM efrecon/mini-tcl:3.7
 MAINTAINER Emmanuel Frecon <efrecon@gmail.com>
 
 # Ensure we have socat since nc on busybox does not support UNIX
 # domain sockets.
-RUN apk add --no-cache socat git && \
-    git clone https://github.com/efrecon/docker-client /tmp/docker-client && \
-    mkdir -p /opt/withstander/docker && \
-    mv /tmp/docker-client/docker /opt/withstander/docker/ && \
-    apk del git && \
-    rm -rf /tmp/docker-client
+RUN apk add --no-cache socat
 
 # COPY code and documentation
 COPY *.md /opt/withstander/
 COPY *.tcl /opt/withstander/
+COPY tockler/*.tcl /opt/withstander/tockler/
 
 # Export where we will look for the Docker UNIX socket.
 VOLUME ["/var/run/docker.sock"]
