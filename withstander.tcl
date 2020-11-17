@@ -13,6 +13,8 @@ set prg_args {
   -verbose   INFO "Verbose level"
   -refresh   5    "Freq. of docker container discovery"
   -period    1    "Freq. of rules checking"
+  -ratio     1.0  "Default ratio of matching rules for trigger"
+  -grace     0    "Default grace period"
   -cert      ""   "Path to certificate for TLS connections"
   -key       ""   "Path to key for TLS connections"
   -h         ""   "Print this help and exit"
@@ -198,8 +200,14 @@ proc forget { id { when ""} } {
   # Compute max lookback into WSTD(history) so we know how much history to
   # save, this will really occur only once.
   if { $WSTD(history) <= 0 } {
-    foreach {ptn period xpr cmd args} $WSTD(-rules) {
-      if { $period > $WSTD(history) } { set WSTD(history) $period }
+    foreach {ptn timings xpr cmd args} $WSTD(-rules) {
+      lassign [split $timings "/"] period ratio grace
+      if { $ratio eq "" } { set ratio $WSTD(-ratio) }
+      if { $grace eq "" } { set grace $WSTD(-grace) }
+
+      if { $period + $grace > $WSTD(history) } {
+        set WSTD(history) [expr {$period+$grace}]
+      }
     }
     docker log DEBUG "Will keep at most $WSTD(history) seconds of statistics for relevant containers"
   }
@@ -421,7 +429,7 @@ proc ::refresh { } {
           # statistics on a regular basis. We have to do this as this
           # will be a long-going HTTP stream-like reception.
           dict set ::C_$id connection ""
-          foreach {ptn period xpr cmd args} $WSTD(-rules) {
+          foreach {ptn timings xpr cmd args} $WSTD(-rules) {
             set cid [cid $id [dict get [set ::C_$id] names] $ptn]
             # This is a container that we should be watching, start
             # collecting stats.
@@ -519,39 +527,53 @@ proc check {} {
     set id [dict get [set $c] id]
     # Traverse the set of known rules to match against the name and possibly
     # triggers.
-    foreach {ptn period xpr cmd args} $WSTD(-rules) {
+    foreach {ptn timings xpr cmd args} $WSTD(-rules) {
+      # Understand the timings as being separated by a slash. This is backwards
+      # compatible with previous versions. First comes the period (in secs),
+      # then the ratio of samples to match, then the grace period. Given the
+      # defaults of this scrit, when nothing is specified it behaves as prior
+      # versions.
+      lassign [split $timings "/"] period ratio grace
+      if { $ratio eq "" } { set ratio $WSTD(-ratio) }
+      if { $grace eq "" } { set grace $WSTD(-grace) }
+
       # We have a rule matching the name/id of the container
       set cid [cid $id [dict get [set ::C_$id] names] $ptn]
       if { $cid ne "" } {
-        # No stats avaible, no match
-        set match 0
+        # No stats available, no match!
+        set match 0;   # Will count number of matches
+        set samples 0; # Will count number of relevant samples
         set allstats [dict get [set ::C_$id] stats]
 
-        # When we have stats, excercise the expression against each
-        # relevant collected statistics (for the rule period) and stop
-        # as soon as it does not match (this will save us some CPU
-        # cycles).
+        # When we have stats, excercise the expression against each relevant
+        # collected statistics (for the rule period). Do this only if we have
+        # enough stats, i.e. period seconds worth of statistics for that
+        # container.
         if { [llength $allstats] } {
-          set match 1
-          foreach {tstamp stats} $allstats {
-            if { $tstamp >= $now - $period } {
-              # Map the dictionary representing the statistics to
-              # something usable, i.e. cpu_stats.system_cpu_usage.
-              set map [list]
-              mapper $stats map
-              # Map this directly into the expression to replace
-              # all occurrences of any collected and relevant
-              # stats by its value at the time of collection.
-              set xpr [string map $map $xpr]
-              # Evaluate the expression with precaution.
-              if { [catch {expr $xpr} res] } {
-                docker log WARN "Cannot understand $xpr: $res" $appname
-              } else {
-                # Break and stop at once as soon as it does not
-                # match, there isn't any purpose in continuing.
-                if { !$res } {
-                  set match 0
-                  break
+          set oldest [lindex $allstats 0]
+          if { $oldest > $now - $grace - $period } {
+            docker log TRACE "Grace period $grace not reached yet!"
+          } elseif { $oldest > $now - $period } {
+            docker log TRACE "Not enough samples yet"
+          } else {
+            foreach {tstamp stats} $allstats {
+              if { $tstamp >= $now - $period } {
+                incr samples;  # Count relevant samples
+                # Map the dictionary representing the statistics to
+                # something usable, i.e. cpu_stats.system_cpu_usage.
+                set map [list]
+                mapper $stats map
+                # Map this directly into the expression to replace
+                # all occurrences of any collected and relevant
+                # stats by its value at the time of collection.
+                set mapped [string map $map $xpr]
+                # Evaluate the expression with precaution, no braces around
+                # $mapped on purpose here!
+                if { [catch {expr $mapped} res] } {
+                  docker log WARN "Cannot understand $mapped: $res" $appname
+                } else {
+                  # When it matches, account for the match
+                  if { $res } { incr match }
                 }
               }
             }
@@ -565,16 +587,23 @@ proc check {} {
         # daemon. Using the main connection is necessary here, since all
         # other connections are used for long-going statistics
         # streaming.
-        if { $match } {
-          docker log NOTICE "Running '$cmd' on container $id with arguments: $args" $appname
-          if { [catch {$WSTD(docker) $cmd $id {*}$args} val] == 0 } {
-            if { [string trim $val] ne "" } {
-              docker log INFO "$cmd returned: $val" $appname
+        if { $match > 0 } {
+          set match_ratio [expr {double($match) / $samples}]
+          docker log DEBUG "$match / $samples matched $xpr, i.e. ratio=$match_ratio"
+          if { $match_ratio >= $ratio } {
+            docker log NOTICE "Running '$cmd' on container $id with arguments: $args" $appname
+            if { [catch {$WSTD(docker) $cmd $id {*}$args} val] == 0 } {
+              if { [string trim $val] ne "" } {
+                docker log INFO "$cmd returned: $val" $appname
+              }
+              # Delete statistics and info for container temporarily, it will be
+              # rediscovered. We do this to reinitialise the list of stats to an
+              # empty list so we can collect period seconds for that container
+              # again before we can take a decision.
+              delete $id
+            } else {
+              docker log WARN "$cmd returned an error: $val" $appname
             }
-            # Delete statistics and info for container temporary
-            delete $id
-          } else {
-            docker log WARN "$cmd returned an error: $val" $appname
           }
         }
       }

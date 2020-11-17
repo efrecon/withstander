@@ -85,7 +85,7 @@ time period.
 
 ## Options
 
-Withstander takes a number of options and arugments on the command-line.  There
+Withstander takes a number of options and arguments on the command-line.  There
 are few options, these are led by a single-dash for quicker typing while keeping
 expressiveness.
 
@@ -97,6 +97,10 @@ daemon on the standard UNIX socket.  To access a remote Docker daemon, use a URL
 such as `tcp://localhost:2375`, for dangerous unencrypted access, or
 `https://localhost:2376` for TLS encrypted access.  In the latter case, you can
 combine this with the options `-cert` and `-key` to pinpoint your remote client.
+For increased security when accessing the local Docker socket, it is possible to
+use a [proxy].
+
+  [proxy]: https://github.com/Tecnativa/docker-socket-proxy
 
 ### `-cert` and `-key`
 
@@ -110,10 +114,19 @@ control the behaviour of withstander.  Rules are groups of 5 with the following
 meaning, in order:
 
 1. Glob-style pattern matching the name (or identifier) of container(s).
-2. Integer number of seconds for expression matching to trigger the command.
+2. Slash (`/`) separated timings for matches. Slashes are optional when not
+   necessary. The timings specifications are, in order:
+   - Integer number of seconds for expression matching to trigger the command.
+   - Ratio (between `0.0` and `1.0`) of samples matching the expression to
+     trigger the command. When empty this will default to the value of command
+     line argument `-ratio`.
+   - Integer number of seconds of a grace period. No checks will be performed
+     under the grace period (+ the period), which allows containers to settle on
+     resource usage during their startup phase. When empty, this defaults to the
+     value of the command line argument `-grace`.
 3. Expression to match against the statistics all along this period (this is
    explained further below).
-4. Docker sub-command to exectute. At present, this is what is supported by the
+4. Docker sub-command to execute. At present, this is what is supported by the
    internal low-level [Tcl](https://github.com/efrecon/docker-client)
    implementation of the Docker [API].
 5. Arguments to the command. These are **not** the arguments from the `docker`
@@ -131,9 +144,23 @@ container snapshot at start-up.
 Frequency (expressed in decimal seconds) at which to check for the set of rules
 controlling the behaviour of withstander. Note that this does **not** change the
 pace of the statistics collection, as this is driven by the Docker Daemon
-intead.  The default is to check every second, which is inline with the pace of
+instead.  The default is to check every second, which is inline with the pace of
 the daemon itself. There might be a "dead" second after container discovery
 where all (CPU) statistics cannot be collected.
+
+### `-ratio`
+
+Default ratio of samples that should match for the collection period of each
+matching rule. This defaults to `1.0`, i.e. all statistics samples must match
+for the rule to trigger. The ratio is a float between `0.0` and `1.0`.
+
+### `-grace`
+
+Default grace period (in seconds) under which no statistics samples are
+considered. This is an integer and defaults to `0`, meaning that the rules will
+be considered as soon as enough statistics have been collected (i.e. as
+specified by the period of the rule). The grace period can account for the fact
+that containers often use more resources during startup before settling down.
 
 ### `-h`
 
@@ -143,9 +170,9 @@ unrecognised option is specified.
 ### `-verbose`
 
 Change the verbosity level, available levels are `CRITICAL`, `ERROR`, `WARN`,
-`NOTICE`, `INFO`, `DEBUG` and the default is `INFO`.  Logging occurs by default
-on `stderr` so that it can be captured by the daemon and further process using
-host-wide mechanisms.
+`NOTICE`, `INFO`, `DEBUG` and `TRACE` and the default is `INFO`.  Logging occurs
+by default on `stderr` so that it can be captured by the daemon and further
+process using host-wide mechanisms.
 
 ## Collected Statistics and Expressions
 
@@ -161,20 +188,20 @@ Using these statistics, withstander compute higher-level statistics that can be
 also be used in expressions.  These statistics are inline with the statistics
 provided by the `docker stats` command, and are, at present:
 
-* `cpuPercent` total instantaneous CPU usage (for all CPUs alloted to the
+- `cpuPercent` total instantaneous CPU usage (for all CPUs alloted to the
   container).
-* `mem` total number of memory used (in bytes), this is an alias for
+- `mem` total number of memory used (in bytes), this is an alias for
   `memory_stats.usage`.
-* `memLimit`, memory limit in number of bytes, this is an alias for
+- `memLimit`, memory limit in number of bytes, this is an alias for
   `memory_stats.limit`.
-* `memPercent` the percentage of memory used by the process right now.
-* `rx` and `tx` the number of bytes received and sent on all interfaces alloted
+- `memPercent` the percentage of memory used by the process right now.
+- `rx` and `tx` the number of bytes received and sent on all interfaces alloted
   to the container.
 
 ### Expressions
 
 Given the statistics described above and how they are represented above,
-withstandard is able to use any syntax that is allowed by the internal Tcl
+withstander is able to use any syntax that is allowed by the internal Tcl
 [expr] syntax.
 
   [expr]: https://www.tcl.tk/man/tcl/TclCmd/expr.htm
